@@ -2,7 +2,7 @@
 
 set -e
 
-source /etc/default/steamos-btrfs
+. /usr/lib/hwsupport/common-functions
 
 # If the script is not run from a tty then send a copy of stdout and
 # stderr to the journal. In this case stderr is also redirected to stdout.
@@ -49,10 +49,10 @@ case "$STORAGE_DEVICE" in
         echo "Usage: $(basename $0) [--version] [--force] [--skip-validation] [--full] [--quick] [--owner <uid>:<gid>] [--label <label>] --device <device>"
         exit 19 #ENODEV
         ;;
-    /dev/mmcblk?)
+    /dev/mmcblk[0-9])
         STORAGE_PARTITION="${STORAGE_DEVICE}p1"
         ;;
-    /dev/sd?)
+    /dev/sd[a-z])
         STORAGE_PARTITION="${STORAGE_DEVICE}1"
         ;;
     *)
@@ -66,20 +66,13 @@ fi
 
 STORAGE_PARTBASE="${STORAGE_PARTITION#/dev/}"
 
-systemctl stop steamos-automount@"$STORAGE_PARTBASE".service
-
-# lock file prevents the mount service from re-mounting as it gets triggered by udev rules.
-#
-# NOTE: Uses a shared lock filename between this and the auto-mount script to ensure we're not double-triggering nor
-# automounting while formatting or vice-versa.
-MOUNT_LOCK="/var/run/jupiter-automount-${STORAGE_PARTBASE//\/_}.lock"
-MOUNT_LOCK_FD=9
-exec 9<>"$MOUNT_LOCK"
-
-if ! flock -n "$MOUNT_LOCK_FD"; then
-  echo "Failed to obtain lock $MOUNT_LOCK, failing"
-  exit 53
+# Shared between this and block-device-event.sh to ensure we're not
+# double-triggering nor automounting while formatting or vice-versa.
+if ! create_lock_file "$STORAGE_PARTBASE"; then
+    exit 53
 fi
+
+/usr/lib/hwsupport/steamos-automount.sh remove "${STORAGE_PARTBASE}"
 
 # If any partitions on the device are mounted, unmount them before continuing
 # to prevent problems later
@@ -140,39 +133,13 @@ echo "stage=formatting"
 sync
 parted --script "$STORAGE_DEVICE" mklabel gpt mkpart primary 0% 100%
 sync
-#### SteamOS Btrfs Begin ####
-if [[ -f /etc/default/steamos-btrfs ]]; then
-    source /etc/default/steamos-btrfs
-fi
-if [[ "$STEAMOS_BTRFS_SDCARD_FORMAT_FS" == "btrfs" ]]; then
-    mkfs.btrfs ${STEAMOS_BTRFS_SDCARD_BTRFS_FORMAT_OPTS:--f -K} "$STORAGE_PARTITION"
-    MOUNT_DIR="/var/run/sdcard-mount"
-    mkdir -p "$MOUNT_DIR"
-    mount -o "${STEAMOS_BTRFS_SDCARD_BTRFS_MOUNT_OPTS:-rw,noatime,lazytime,compress-force=zstd,space_cache=v2,autodefrag,ssd_spread}" "$STORAGE_PARTITION" "$MOUNT_DIR"
-    btrfs subvolume create "$MOUNT_DIR/${STEAMOS_BTRFS_SDCARD_BTRFS_MOUNT_SUBVOL:-@}"
-    btrfs subvolume set-default "$MOUNT_DIR/${STEAMOS_BTRFS_SDCARD_BTRFS_MOUNT_SUBVOL:-@}"
-    umount -l "$MOUNT_DIR"
-    rmdir "$MOUNT_DIR"
-elif [[ "$STEAMOS_BTRFS_SDCARD_FORMAT_FS" == "f2fs" ]]; then
-    mkfs.f2fs ${STEAMOS_BTRFS_SDCARD_F2FS_FORMAT_OPTS:--O encrypt,extra_attr,inode_checksum,sb_checksum,casefold,compression -C utf8 -f -t 0} "$STORAGE_PARTITION"
-elif [[ "$STEAMOS_BTRFS_SDCARD_FORMAT_FS" == "fat" ]]; then
-    mkfs.vfat ${STEAMOS_BTRFS_SDCARD_FAT_FORMAT_OPTS:--F 32 -I} "$STORAGE_PARTITION"
-elif [[ "$STEAMOS_BTRFS_SDCARD_FORMAT_FS" == "exfat" ]]; then
-    mkfs.exfat ${STEAMOS_BTRFS_SDCARD_EXFAT_FORMAT_OPTS:---pack-bitmap} "$STORAGE_PARTITION"
-elif [[ "$STEAMOS_BTRFS_SDCARD_FORMAT_FS" == "ntfs" ]]; then
-    mkfs.ntfs ${STEAMOS_BTRFS_SDCARD_NTFS_FORMAT_OPTS:--f -F} "$STORAGE_PARTITION"
-else
-    mkfs.ext4 -E "$EXTENDED_OPTIONS" ${STEAMOS_BTRFS_SDCARD_EXT4_FORMAT_OPTS:--m 0 -O casefold -F} "$STORAGE_PARTITION"
-fi
-#### SteamOS Btrfs End ####
+mkfs.ext4 -m 0 -O casefold -E "$EXTENDED_OPTIONS" "${EXTRA_MKFS_ARGS[@]}" -F "$STORAGE_PARTITION"
 sync
 udevadm settle
 
-# trigger the mount service
-flock -u "$MOUNT_LOCK_FD"
-if ! systemctl start steamos-automount@"$STORAGE_PARTBASE".service; then
-    echo "Failed to start mount service"
-    journalctl --no-pager --boot=0 -u steamos-automount@"$STORAGE_PARTBASE".service
+# Mount the device
+if ! /usr/lib/hwsupport/steamos-automount.sh add "$STORAGE_PARTBASE"; then
+    echo "Failed to mount ${STORAGE_PARTBASE}"
     exit 5
 fi
 

@@ -10,6 +10,7 @@ fi
 WRITE_PATH="$1"
 WRITE_VALUE="$2"
 
+
 DECK=""
 ZSERIES=""
 
@@ -88,14 +89,19 @@ fi
 # 610M
 # Vega (PRO only)
 
+
 function CommitWrite()
 {
-    echo "commit: $WRITE_VALUE -> $WRITE_PATH" | systemd-cat -t p-steamos-priv-write -p warning
-    echo "$WRITE_VALUE" > "$WRITE_PATH"
-    chmod a+w "$WRITE_PATH"
-    exit 0
-}
+   if [ ! -z "$WRITE_VALUE" ]
+   then
+      echo "commit: $WRITE_VALUE -> $WRITE_PATH" | systemd-cat -t p-steamos-priv-write -p warning
+      echo "$WRITE_VALUE" > "$WRITE_PATH"
+   fi
 
+   chmod a+w "$WRITE_PATH"
+   echo "chmod a+w: $WRITE_PATH" | systemd-cat -t p-steamos-priv-write -p warning
+   exit 0
+}
 
 function DeclineWrite()
 {
@@ -104,9 +110,13 @@ function DeclineWrite()
     exit 1
 }
 
-
+echo "checking: $WRITE_PATH" | systemd-cat -t p-steamos-priv-write -p warning
 if [[ "$WRITE_PATH" == /sys/class/backlight/*/brightness ]]; then
-        CommitWrite
+   CommitWrite
+fi
+
+if [[ "$WRITE_PATH" == /dev/drm_dp_aux0 ]]; then
+   CommitWrite
 fi
 
 if [[ "$WRITE_PATH" == /sys/class/drm/card*/device/power_dpm_force_performance_level ]]; then
@@ -122,7 +132,6 @@ if [[ "$WRITE_PATH" == /sys/class/drm/card*/device/power_dpm_force_performance_l
                 CommitWrite
         done
 fi
-
 
 if [[ "$WRITE_PATH" == /sys/class/drm/card*/device/pp_od_clk_voltage ]]; then
 
@@ -296,16 +305,27 @@ if [[ "$WRITE_PATH" == /sys/class/hwmon/hwmon*/power*_cap ]]; then
 fi
 
 if [[ "$WRITE_PATH" == /sys/devices/platform/*/*/*/iio:device*/in_illuminance_integration_time ]]; then
-        CommitWrite
+   CommitWrite
 fi
 
 if [[ "$WRITE_PATH" == /sys/devices/*/*/*/*/hwmon/hwmon*/led_brightness ]]; then
-        CommitWrite
+   CommitWrite
 fi
 
 if [[ "$WRITE_PATH" == /sys/devices/*/*/*/*/hwmon/hwmon*/content_adaptive_brightness ]]; then
-        CommitWrite
+   CommitWrite
+fi
+
+if [[ "$WRITE_PATH" == /sys/devices/platform/*/i2c-2/i2c-*/brightness ]]; then
+   CommitWrite
+fi
+
+if [[ "$WRITE_PATH" == /sys/devices/platform/*/i2c-2/i2c-*/bmode ]]; then
+   CommitWrite
+fi
+
+if [[ "$WRITE_PATH" == /sys/class/leds/status\:white/led_brightness_multiplier ]]; then
+   CommitWrite
 fi
 
 DeclineWrite
-
